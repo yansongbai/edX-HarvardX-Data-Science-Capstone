@@ -19,11 +19,5 @@ The submission for the choose-your-own project will be three files: a report in 
 Report and Script
 Your report and script will be graded by your peers, based on a rubric defined by the course staff, as well as by the course staff. The staff grade will be your final grade for the project. To receive your grade, you must review and grade the reports of five of your fellow learners after submitting your own. This will give you the chance to learn from your peers.
 
-Please pay attention to the due dates listed! The project submission is due before the end of the course to allow time for peer grading. Also note that you must grade the reports of your peers by the course close date in order to receive your grade.
-
-Honor Code
-You are welcome to discuss your project with others, but all submitted work must be your own. Your participation in this course is governed by the terms of the edX Honor Code.
-
-Project Due Date
-Submissions for the project are due one week before course close, on January 10, 2020, at 23:59 UTC. This allows time for peer grading to occur! Peer grades are due at course close, on January 17, 2020, at 23:59 UTC.
-
+Submission
+The purpose of this Capstone Project is to create a credit card fraud detection system using data science and machine learning techniques to analyze transaction data of credit cards in September 2013 by European cardholders, with the dataset available at https://www.kaggle.com/mlg-ulb/creditcardfraud. The full dataset includes 284,407 transactions.
