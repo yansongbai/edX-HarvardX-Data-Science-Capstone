@@ -1,0 +1,642 @@
+---
+title: "Capstone Project Report: Credit Card Fraud Detection"
+author: "Yan Song Bai"
+date: "January 9, 2020"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Executive Summary
+The purpose of this Capstone Project is to create a credit card fraud detection system using data science and machine learning techniques to analyze transaction data of credit cards in September 2013 by European cardholders, with the dataset available at https://www.kaggle.com/mlg-ulb/creditcardfraud. The full dataset includes 284,407 transactions.
+
+Key steps performed in this project are: 
+1.	Download and import the dataset
+2.	Explore the dataset and create the train and Test sets
+3.	Process the data and develop data model
+4.	Review the model based on the Test set
+
+The metric used for measuring the score is the Area Under Curve (AUC) and a desirable result should have an AUC at least greater than 0.85. In this analysis, the model is able to achieve an AUC of 0.9799858, indicating the of the analysis. 
+## Methods and Analysis
+## Exploratory Data Analysis
+The dataset used in this analysis includes the credit card transactions during a two-day period in September 2013 by European cardholders. The dataset contains 284,407 transactions, with 30 features associated with the transaction. 
+
+## Data Type 
+Only numerical values are contained in this dataset due to PCA transformation, while the only 2 features that have not been transformed are ‘Time’ (i.e. the duration between the first transaction and the recorded transaction) and ‘Amount’ of the transactions and the rest of the features are labeled from V1 to V28 as they have low relevance to this analysis. The dataset is labeled with ‘Class’ and when Class has a value of 1, a positive (fraudulent) transaction is recorded, whereas a 0 value indicates regular transaction.
+
+## Data Distribution
+The first 6 rows of the dataset is as follows:
+![](The first 6 rows of the dataset.png)
+
+Data outlier is also identified in this analysis. It can be seen in the following graphy that there are no significant outliers in the dataset.
+![](2.png)
+
+```{r echo=FALSE, warning=FALSE}
+data1 <- read.csv(file= file.choose())
+```
+## Data Description
+The dataset is arbitrarily separated into training and testing sets. Training set contains 70% of the data while testing set contains 30%. The distribution of the transaction data is shown as below. It can be seen that the dataset is very inbalanced.
+
+| Label | Total sample | Train | Test |
+| :------| ------: | :------: | :------: |
+| 0 (Normal) | 284315 | 199145 | 85170 |
+| 1 (Fraud) | 492 | 342 | 150 |
+
+## Coverage Analysis
+As missing values may cause high degree of uncertainties and instabilities in data analysis and modelling, it is important to determine the degree of data coverage and data quality of the dataset. As the chart below suggests, the dataset has no missing values and has full coverage. 
+
+```{r echo=FALSE, warning=FALSE}
+
+get_coverage <- function(data){
+  coverage <- sapply(data,function(x)1- sum(is.na(x))/length(x))
+  tmp <- data.frame(colnames(data),coverage)
+  return(tmp)
+}
+
+coverage_df <- get_coverage(data1)
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+data_type <- sapply(data1,function(x) class(x))
+```
+
+## Correlation Matrix
+Correlation between each variables in the dataset are examined, as shown in the following graph. It can be seen that the variables are not closely related to each other and multicollinearity is not a major concern in the following analysis.
+```{r echo=FALSE, warning=FALSE}
+label <- data1$Class
+dim(data1)
+data2 <- data1[,1:30]
+data2_cor <- cor(data2)
+#Import the corrplot package to view the correlation
+
+if(!require('corrplot')) install.packages('corrplot')
+require('corrplot')
+
+corrplot(data2_cor,method = 'number',type = 'upper')
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+
+data2_qu <- sapply(data2,function(x) quantile(x))
+```
+## Data Processing
+Because of the continuity of data, the ChiMerge method is used in order to make discretized data easier to process and stabilize modelling. The dplyr package is mainly used in this part of the analysis. The whole dataset is divided into 100 intervals and Chi-square values are calculated to merge the two adjacent intervals with the lowest Chi-square values until all pairs have Chi-square values above the threshold value. Each interval must contain positive (fraud) and negative (normal) data. 
+
+## ChiMerge Result
+
+```{r echo=FALSE, warning=FALSE}
+#Initialize partition
+SplitData <- function(df,col,numOfSplit,special_attribute=NULL){
+  library(dplyr)
+  #When there are too many initial value sets of continuous variables (> 100), we first divide them
+  #:param df: Data set sorted by col
+  #:param col: Variables to be split
+  #:param numOfSplit: Number of groups divided
+  #:param special_attribute: Data grouping after exclusion of special
+  
+  df2 <- df
+  if(length(special_attribute)>0){
+    df2 <- filter(df,! col %in% special_attribute)
+  }
+  N <- dim(df2)[1] #Row number
+  n <- floor(N/numOfSplit) #Number of samples in each group
+  splitPointIndex <- seq(1,numOfSplit-1,1)*n #Subscript of split point
+  rawValues <- sort(df2[,col]) #Sort values in ascending order
+  splitPoint <- rep(0,length(rawValues))
+  for(i in splitPointIndex){
+    splitPoint[i] <- rawValues[i]  #Value of split point
+  }
+  splitPoint <- sort(unique(splitPoint)) #Sort values in ascending order
+  if(splitPoint[1]==0){
+    splitPoint<- splitPoint[-1]
+  }
+  return(splitPoint)
+}
+
+#Calculate the ratio of good to bad for each value
+BinBadRate <- function(df,col,target,grantRateIndicator=0){
+  library(dplyr)
+  #:param df:Data set to calculate the ratio of good to bad
+  #:param col:Need to calculate the characteristics of the ratio of good to bad
+  #:param target:lable
+  #:param grantRateIndicator:1Return the overall bad sample rate，0Do not return
+  #total <- df %>% group_by(col) %>% summarise(total=n())
+  #bad <- df %>% group_by(col) %>% summarise(bad=sum(target))
+  total <- data.frame(table(df[,col]))
+  names(total) <- c(col,'total')
+  bad <- data.frame(tapply(df[,target],df[,col],FUN = sum))
+  bad$bad <- row.names(bad)
+  names(bad) <- c('bad',col)
+  regroup <- left_join(total,bad,by=col)
+  #regroup$bad_rate  <- bad/total
+  regroup <- mutate(regroup,bad_rate = bad/total)
+  dicts <- regroup[,'bad_rate'] #Vector composed of bad sample rate corresponding to each box
+  names(dicts) <- regroup[,col]
+  if(grantRateIndicator==0){
+    return(list(dicts,regroup))
+  }else{
+    N =sum(regroup[,'total'])
+    B = sum(regroup[,'bad'])
+    overallRate = B*1.0/N
+    return(list(dicts,regroup,overallRate))
+  }
+}
+
+#Calculate chi square value
+Chi2 <- function(df,total_col,bad_col){
+  library(dplyr)
+  df2 <- df
+  # Find out the bad sample rate and good sample rate of the population in df
+  badRate <- sum(df2[,bad_col])/sum(df2[,total_col])
+  # When all samples have only good or bad samples, the chi square value is 0
+  if(badRate %in% c(0,1)){
+    return(0)
+  }
+  good=df2[,total_col]-df2[,bad_col]
+  df2 <- cbind(df2,good)
+  goodRate = sum(df2[,'good'])/ sum(df2[,total_col])
+  # Expected number of bad (good) samples = total number of samples * average proportion of bad (good) samples
+  badExpected=df2[,total_col]*badRate
+  goodExpected=df2[,total_col]*goodRate
+  df2 <- cbind(df2,badExpected)
+  df2 <- cbind(df2,goodExpected)
+  badChi <- sum(((df2[,bad_col]-df2[,'badExpected'])^2)/df2[,'badExpected'])
+  goodChi <- sum(((df2[,'good']-df2[,'goodExpected'])^2)/df2[,'goodExpected'])
+  chi2 <- badChi+goodChi
+  return(chi2)
+}
+AssignBin <- function(x,cutOffPoints,special_attribute=NULL){
+  # :param x: A value of a variable
+  # :param cutOffPoints:The box splitting results of the above variables are represented by the points of segmentation
+  # :param special_attribute:Do not participate in the special value of sub container
+
+  # for example, if cutOffPoints = c(10,20,30), if x = 7, return Bin 0. If x = 35, return Bin 3
+  
+  
+  numBin = length(cutOffPoints)+1+length(special_attribute)
+  if(x %in% special_attribute){
+    i <-  which(special_attribute==x)
+    return(paste('Bin',0-i))
+  }
+  if(x<= cutOffPoints[1]){
+    return('Bin 0')
+  }else if(x>cutOffPoints[length(cutOffPoints)]){
+    return(paste("Bin",numBin-1))
+  }else{
+    for(i in seq(1,numBin-1)){
+      if(cutOffPoints[i] < x & x<= cutOffPoints[i+1]){
+        return(paste('Bin',i))
+      }
+    }
+  }
+}
+AssignGroup <- function(x,bin){
+  # '
+  #   :param x:A value of a variable
+  #   :param bin:Split results of the above variables
+  #  
+  N = length(bin)
+  if(x<=min(bin)){
+    return(min(bin))
+  }else if(x>max(bin)){
+    return(10e10)
+  }else{
+    for(i in 1:N-1){
+      if(bin[i]<x && x<=bin[i+1]){
+        return(bin[i+1])
+      }
+    }
+  }
+}
+
+ChiMerge <- function(df,col,target,max_interval=5,special_attribute=NULL,minBinPcnt=0,numOfSplit=100){
+  # '''
+  #   chi-square
+  #   :param df:data frame
+  #   :param target:lable，0 or 1
+  #   :param col:Variables to be split
+  #   :param max_interval:Maximum number of containers
+  #   :return ：return result
+  #   '''
+  library(dplyr)
+  colLevels=sort(unique(df[,col])) #Sort variable values in ascending order
+  N_distinct = length(colLevels) #Number of different values
+  if(N_distinct<=max_interval){ 
+    print(paste(col,' Number of variables is greater than max_interval:',max_interval))
+    return(colLevels[-length(colLevels)])
+  }else{
+    if(length(special_attribute)>=1){
+      df1 <- filter(df,col %in% special_attribute)
+      df2 <- filter(df,!col %in% special_attribute)
+    }else{
+      df2 <- df
+    }
+    
+    N_distinct <- length(unique(df2[,col]))
+    
+    
+    #step 1：The data sets are grouped by col, and the total number of samples and the number of bad samples in each group are calculated
+    if(N_distinct>numOfSplit){
+      split_x <- SplitData(df2,col,numOfSplit)
+      #temp <- cut(df2[,col],breaks = split_x,include.lowest = TRUE)
+      temp <- apply(df2[col],1,AssignGroup,split_x)
+      df2 <- cbind(df2,temp)
+    }else{
+      temp <- df2[,col]
+      df2 <- cbind(df2,temp)
+      
+    }
+    
+    ha <- BinBadRate(df2,'temp',target)
+    regroup <- ha[[2]]
+    binBadRate<- ha[[1]]
+    
+    colLevels<- sort(unique(df2[,'temp']))
+    
+    groupIntervals <- list()
+    for(i in 1:length(colLevels)){
+      groupIntervals[i] <-list(colLevels[i])
+    }
+    
+    # #step2，Establish a cycle to continuously merge the best two adjacent groups until：
+    # #1.Final split number of sub containers < = preset maximum number of sub containers
+    # #2.Each box contains good and bad samples at the same time
+  
+    split_intervals= max_interval-length(special_attribute)
+
+    while(length(groupIntervals)>=split_intervals){ 
+     
+      chisqList <- rep(100000000,length(groupIntervals)-1)
+      for(k in 1:(length(groupIntervals)-1)){
+        temp_group <- c(groupIntervals[[k]],groupIntervals[[k+1]])
+        df2b <- filter(regroup, temp %in% temp_group)
+        chisq = Chi2(df2b,'total','bad')
+        chisqList[k] <- chisq
+      }
+      best_combined <- order(chisqList)[1] 
+      #merge
+      groupIntervals[[best_combined]] = c(groupIntervals[[best_combined]],groupIntervals[[best_combined+1]])
+      # after combining two intervals, we need to remove one of them
+      groupIntervals[[best_combined+1]] <- NULL
+      
+    }
+    
+    for(i in 1:length(groupIntervals)){
+      groupIntervals[[i]]<- sort(groupIntervals[[i]])
+    }
+    
+    cutOffPoints <- rep(0,length(groupIntervals)-1)
+    for(i in 1:(length(groupIntervals)-1)){
+      cutOffPoints[i] <- max(groupIntervals[[i]])
+    }
+    
+    # Check if there are any good or bad samples in the box. If so, it needs to be combined with the adjacent boxes until each box contains both good and bad samples
+    groupedvalues <-  apply(df2['temp'],1,AssignBin,cutOffPoints,special_attribute)
+    temp_Bin<-groupedvalues
+    df2 <- cbind(df2,temp_Bin)
+    
+    middle <- BinBadRate(df2,'temp_Bin',target)
+    binBadRate <- middle[[1]]
+    regroup <- middle[[2]]
+    minBadRate <- min(binBadRate)
+    maxBadRate <- max(binBadRate)
+while(minBadRate ==0 || maxBadRate == 1){
+  
+   indexForBad01 <- filter(regroup,bad_rate %in% c(0,1))[,'temp_Bin']
+   bin <- indexForBad01[1]
+   return(bin)
+
+   if(bin==max(regroup[,'temp_Bin'])){
+     cutOffPoints <- cutOffPoints[1:length(cutOffPoints)-1]
+   }else if(bin == min(regroup[,'temp_Bin'])){
+   
+     cutOffPoints[1] <- NULL
+   }else{
+    
+     currentIndex <- which(regroup[,'temp_Bin']==bin)
+     prevIndex <- regroup[,'temp_Bin'][currentIndex - 1]
+     df3 <- filter(df2,temp_Bin %in% c(prevIndex,bin))
+     middle <- BinBadRate(df3, 'temp_Bin', target)
+     binBadRate <- middle[[1]]
+     df2b <- middle[[2]]
+     chisq1 = Chi2(df2b, 'total', 'bad')
+    
+     laterIndex <- regroup[,'temp_Bin'][currentIndex + 1]
+     df3b <- filter(df2,temp_Bin %in% c(prevIndex,bin))
+     middle <- BinBadRate(df3b, 'temp_Bin', target)
+     binBadRate <- middle[[1]]
+     df2b <- middle[[2]]
+     chisq2 = Chi2(df2b, 'total', 'bad')
+     if(chisq1 < chisq2){
+       cutOffPoints[currentIndex - 1] <- NULL
+     }else{cutOffPoints[currentIndex] <- NULL}
+   }
+ 
+   groupedvalues <- apply(df2['temp'],1,AssignBin,cutOffPoints,special_attribute)
+   temp_Bin = groupedvalues
+   df2 <- cbind(df2,temp_Bin)
+   middle <- BinBadRate(df2, 'temp_Bin', target)
+   binBadRate <- middle[[1]]
+   regroup <- middle[[2]]
+   minBadRate <- min(binBadRate)
+   maxBadRate <- maxmax(binBadRate)
+}
+
+
+if(minBinPcnt > 0){
+   groupedvalues <- apply(df2['temp'],1,AssignBin,cutOffPoints,special_attribute)
+   temp_Bin = groupedvalues
+   df2 <- cbind(df2,temp_Bin)
+   valueCounts <- data.frame(table(groupedvalues))
+   names(valueCounts)[2] <- 'temp'
+   pcnt=valueCounts[,'temp']/sum(valueCounts[,'temp'])
+   valueCounts <- cbind(valueCounts,pcnt)
+   valueCounts <- arrange(valueCounts,Var1)
+   minPcnt = min(valueCounts[,'pcnt'])
+   while(minPcnt < minBinPcnt & len(cutOffPoints) > 2){
+     # Find the smallest box
+     indexForMinPcnt = filter(valueCounts,valueCounts[,'pcnt'] == minPcnt)[,'var1'][1]
+     # If the box with the smallest proportion is the last box, it needs to be combined with the previous box
+     if(indexForMinPcnt==max(valueCounts[,'var1'])){
+       cutOffPoints[length(cutOffPoints)] <- NULL
+     }else if(indexForMinPcnt==min(valueCounts[,'var1'])){
+       # If the box with the smallest proportion is the first box, it needs to be combined with the next box
+       cutOffPoints[1] <- NULL
+     }else{
+       # If the box with the smallest proportion is a box in the middle, it needs to be combined with a box in the front and back, based on the smaller chi square value
+    
+       currentIndex <- which(valueCounts[,'pcnt']==indexForMinPcnt)
+       prevIndex <- valueCounts[,'var1'][currentIndex-1]
+       df3 <- filter(df2,var1 %in% c(prevIndex, indexForMinPcnt))
+       middle <- BinBadRate(df3, 'temp_Bin', target)
+       binBadRate <- middle[[1]]
+       df2b <- middle[[2]]
+       chisq1 = Chi2(df2b, 'total', 'bad')
+
+       laterIndex <- valueCounts[,'var1'][currentIndex-1]
+       df3b <- filter(df2,temp_Bin %in% c(laterIndex, indexForMinPcnt))
+       middle <- BinBadRate(df3b, 'temp_Bin', target)
+       binBadRate <- middle[[1]]
+       df2b <- middle[[2]]
+       chisq2 = Chi2(df2b, 'total', 'bad')
+       if(chisq1<chisq2){
+         cutOffPoints[currentIndex - 1] <- NULL
+       }else{cutOffPoints[currentIndex] <- NULL}
+     }
+     groupedvalues <- apply(df2['temp'],1,AssignBin,cutOffPoints,special_attribute)
+     temp_Bin = groupedvalues
+     df2 <- cbind(df2,temp_Bin)
+     valueCounts <- data.frame(table(groupedvalues))
+     names(valueCounts)[2] <- 'temp'
+     pcnt=valueCounts[,'temp']/sum(valueCounts[,'temp'])
+     valueCounts <- cbind(valueCounts,pcnt)
+     valueCounts <- arrange(valueCounts,Var1)
+     minPcnt = min(valueCounts[,'pcnt'])
+   }
+}
+cutOffPoints = c(special_attribute , cutOffPoints)
+return(cutOffPoints)
+  }
+  }
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+label <- data1[,31]
+if(!require('dplyr')) install.packages('dplyr')
+#Calculated cut point
+cut_list <- lapply(colnames(data1[,1:30]),function(x)ChiMerge(df = data1, col = x, target = "Class"))
+cut_list
+#Split the box according to the tangent point (left open right closed)
+data_cut <- function(df){
+  #Time
+  cut_point <- c(-120,42500,83200,10900,200000)
+  cut_labels <- c('<=42500','42500~83200','83200~10900','>10900')
+  df[,1] <- cut(as.vector(df[,1]),breaks = cut_point,labels = cut_labels)
+  #V1
+  cut_point <- c(-120,-4,-1,1,200000)
+  cut_labels <- c('<=-4','-4~-1','-1~1','>1')
+  df[,2] <- cut(df[,2],breaks = cut_point,labels = cut_labels)
+  #V2
+  cut_point <- c(-120,-2,1,2,200000)
+  cut_labels <- c('<=-2','-2~1','1~2','>2')
+  df[,3] <- cut(df[,3],breaks = cut_point,labels = cut_labels)
+  #V3
+  cut_point <- c(-120,-4,-2,0,200000)
+  cut_labels <- c('<=-4','-4~-2','-2~0','>0')
+  df[,4] <- cut(df[,4],breaks = cut_point,labels = cut_labels)
+  #V4
+  cut_point <- c(-120,1,2,4,200000)
+  cut_labels <- c('<=1','1~2','2~4','>4')
+  df[,5] <- cut(df[,5],breaks = cut_point,labels = cut_labels)
+  #V5
+  cut_point <- c(-120,-3,-1.6,0.6,200000)
+  cut_labels <- c('<=-3','-3~-1.6','-1.6~0.6','>0.6')
+  df[,6] <- cut(df[,6],breaks = cut_point,labels = cut_labels)
+  #V6
+  cut_point <- c(-120,-2,-1,0,200000)
+  cut_labels <- c('<=-2','-2~-1','-1~0','>0')
+  df[,7] <- cut(df[,7],breaks = cut_point,labels = cut_labels)
+   #V7
+  cut_point <- c(-120,-3,-1.5,-1,200000)
+  cut_labels <- c('<=-3','-3~-1.5','-1.5~-1','>-1')
+  df[,8] <- cut(df[,8],breaks = cut_point,labels = cut_labels)
+   #V8
+  cut_point <- c(-120,0,1,2,200000)
+  cut_labels <- c('<=0','0~1','1~2','>2')
+  df[,9] <- cut(df[,9],breaks = cut_point,labels = cut_labels)
+   #V9
+  cut_point <- c(-120,-2,-1,-0.5,200000)
+  cut_labels <- c('<=-2','-2~-1','-1~-0.5','>0.5')
+  df[,10] <- cut(df[,10],breaks = cut_point,labels = cut_labels)
+    #V10
+  cut_point <- c(-120,-2,-1,0,200000)
+  cut_labels <- c('<=-2','-2~-1','-1~0','>0')
+  df[,11] <- cut(df[,11],breaks = cut_point,labels = cut_labels)
+   #V11
+  cut_point <- c(-120,0,1.8,2.2,200000)
+  cut_labels <- c('<=0','0~1.8','1.8~2.2','>2.2')
+  df[,12] <- cut(df[,12],breaks = cut_point,labels = cut_labels)
+   #V12
+  cut_point <- c(-120,-3,-2,0,200000)
+  cut_labels <- c('<=-3','-3~-2','-2~0','>0')
+  df[,13] <- cut(df[,13],breaks = cut_point,labels = cut_labels)
+    #V13
+  cut_point <- c(-120,-1,0,1,200000)
+  cut_labels <- c('<=-1','-1~0','0~1','>1')
+  df[,14] <- cut(df[,14],breaks = cut_point,labels = cut_labels)
+   #V14
+  cut_point <- c(-120,-3,-0.4,0.3,200000)
+  cut_labels <- c('<=-3','-3~-0.4','-0.4~0.3','>0.3')
+  df[,15] <- cut(df[,15],breaks = cut_point,labels = cut_labels)
+   #V15
+  cut_point <- c(-120,-1,0,1,200000)
+  cut_labels <- c('<=-1','-1~0','0~1','>1')
+  df[,16] <- cut(df[,16],breaks = cut_point,labels = cut_labels)
+   #V16
+  cut_point <- c(-120,-2,0,1,200000)
+  cut_labels <- c('<=-2','-2~0','0~1','>1')
+  df[,17] <- cut(df[,17],breaks = cut_point,labels = cut_labels)
+    #V17
+  cut_point <- c(-120,-1,0,1,200000)
+  cut_labels <- c('<=-1','-1~0','0~1','>1')
+  df[,18] <- cut(df[,18],breaks = cut_point,labels = cut_labels)
+   #V18
+  cut_point <- c(-120,-2,-1,1,200000)
+  cut_labels <- c('<=-2','-2~-1','-1~1','>1')
+  df[,19] <- cut(df[,19],breaks = cut_point,labels = cut_labels)
+   #V19
+  cut_point <- c(-120,0,1,2,200000)
+  cut_labels <- c('<=0','0~1','1~2','>2')
+  df[,20] <- cut(df[,20],breaks = cut_point,labels = cut_labels)
+   #V20
+  cut_point <- c(-120,-0.4,0,0.2,200000)
+  cut_labels <- c('<=-0.4','-0.4~0','0~0.2','>0.2')
+  df[,21] <- cut(df[,21],breaks = cut_point,labels = cut_labels)
+    #V21
+  cut_point <- c(-120,-1,0.3,0.5,200000)
+  cut_labels <- c('<=-1','-1~0.3','0.3~0.5','>0.5')
+  df[,22] <- cut(df[,22],breaks = cut_point,labels = cut_labels)
+   #V22
+  cut_point <- c(-120,-1,0,2,200000)
+  cut_labels <- c('<=-1','-1~0','0~2','>2')
+  df[,23] <- cut(df[,23],breaks = cut_point,labels = cut_labels)
+   #V23
+  cut_point <- c(-120,-0.3,0,0.4,200000)
+  cut_labels <- c('<=-0.3','-0.3~0','0~0.4','>0.4')
+  df[,24] <- cut(df[,24],breaks = cut_point,labels = cut_labels)
+   #V24
+  cut_point <- c(-120,-0.6,-0.1,0.5,200000)
+  cut_labels <- c('<=-0.6','-0.6~-0.1','-0.1~0.5','>0.5')
+  df[,25] <- cut(df[,25],breaks = cut_point,labels = cut_labels)
+   #V25
+  cut_point <- c(-120,-1,0,1,200000)
+  cut_labels <- c('<=-1','-1~0','0~1','>1')
+  df[,26] <- cut(df[,26],breaks = cut_point,labels = cut_labels)
+   #V26
+  cut_point <- c(-120,-0.3,0,0.3,200000)
+  cut_labels <- c('<=-0.3','-0.3~0','0~0.3','>0.3')
+  df[,27] <- cut(df[,27],breaks = cut_point,labels = cut_labels)
+   #V27
+  cut_point <- c(-120,-1,0,1,200000)
+  cut_labels <- c('<=-1','-1~0','0~1','>1')
+  df[,28] <- cut(df[,28],breaks = cut_point,labels = cut_labels)
+   #V28
+  cut_point <- c(-120,-0.1,0.2,0.4,200000)
+  cut_labels <- c('<=-0.1','-0.1~0.2','0.2~0.4','>0.4')
+  df[,29] <- cut(df[,29],breaks = cut_point,labels = cut_labels)
+    #Amount
+  cut_point <- c(-120,1,10,96,200000)
+  cut_labels <- c('<=','1~10','10~96','>96')
+  df[,30] <- cut(df[,30],breaks = cut_point,labels = cut_labels)
+  
+  
+  return(df)
+}
+
+data3 <- data_cut(data1)
+
+```
+
+```{r echo=FALSE, warning=FALSE}
+df_lable <- data.frame()
+for(i in 1:30){
+  
+  table_i <- table(data3[,i],data3[,31])
+  df_lable <- rbind(df_lable,table_i)
+  
+}
+
+df_name <- rep(colnames(data3[,1:30]),each=8)
+df_lable1 <- data.frame(df_name,df_lable)
+df_lable1
+```
+
+Information Value (IV) is utilized as a metric to examine the distinctiveness of variables and is used as filter towards the variables prior to modelling.
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=default"></script>
+
+$$IV_i = (p(y=1)_i-P(y=0)_i)*WOE_i$$
+Whereas Weight of Evidence (woe) represents the transformation towards the original variables in which continuous variables are discretized and each resulting interval has a corresponding value calculated; it is determined by the percentage of positive (fraud) data divided by the percentage of negative (normal) data within the interval.
+$$WOE_i = ln\frac{p(y=1_i)}{p(y=0)_I}$$
+In this analysis, the IV values of the data is determined as follows. Variables with IV higher than 1 are kept while the rest are filtered. 18 variables are kept as a result of this operation. Regarding the imbalance of the dataset, no particular action is performed since the presence of the 18 variables with IV higher than 1 indicates that the dataset is relatively distinctive.
+
+```{r echo=FALSE, warning=FALSE}
+
+woe_iv <- function(x,y){
+	ddata <- cbind(data.frame(x),data.frame(y))
+	goodnum <- sum(y==0)
+	badnum <- sum(y==1)
+	xlevel <- levels(x)
+	num_x <- length(xlevel)
+	woe_value <- as.numeric()
+	iv_value <- as.numeric()
+	for(i in 1:num_x){
+		goodnum_x <- nrow(ddata[which(ddata[,1]==xlevel[i]&ddata[,2]==0),])
+		badnum_x <- nrow(ddata[which(ddata[,1]==xlevel[i]&ddata[,2]==1),])
+		woe_value[i] <- log((badnum_x/goodnum_x)/(badnum/goodnum))
+		iv_value[i] <- (badnum_x/badnum - goodnum_x/goodnum)*woe_value[i]
+
+	}
+
+	result <- sum(iv_value)
+	return(result)
+
+}
+data_iv <- sapply(data3[,1:30],function(x) woe_iv(x,data3[,31]))
+data3_iv <- data.frame('feature'=colnames(data3[,-31]),'IV' = data_iv)
+data3_iv[order(data3_iv$IV,decreasing = T),]
+```
+
+## Data Modeling 
+Based on the exploration and processing of the dataset, the logistic regression model is utilized in this analysis as a classifier of credit card transaction data. When the output is greater than 0.5, a positive (fraud) transaction is detected; when the output is smaller than 0.5, a negative (normal) transaction is detected.
+$$h_\theta(x)=\frac{1}{1+e^\theta^Tx}$$
+```{r echo=FALSE, warning=FALSE}
+name_iv <- colnames(data3)[which(data_iv>1)]
+data4 <- data3[,c(name_iv,"Class")]
+
+set.seed(1234)
+index <- sample(x = 2,size = nrow(data3),replace=TRUE,prob = c(0.7,0.3))
+traindata <- data4[index==1,]
+testdata <- data4[index==2,]
+traindata_lable1 <- sum(traindata$Class)
+traindata_lable1
+traindata_lable0 <- dim(traindata)[1] - traindata_lable1
+traindata_lable0
+```
+Area Under Curve (AUC), defined as the area under the ROC curve, is used to assess the performance of the model. A higher AUC indicates a better performance of the classifier model. In this analysis, the AUC is determined as follows.
+```{r echo=FALSE, warning=FALSE}
+#formula
+f <- as.formula(paste('Class ~',paste(name_iv,collapse = ' + ')))
+#Training model
+model_glm <- glm(f,data = traindata,family = binomial)
+summary(model_glm)
+
+```
+## Results
+For the purpose of this project, the final AUC should be greater than 0.85. The AUC results obtained from the logistic model are 0.9753151 for the training set and 0.9799858 for the test set, thus meeting the AUC requirement. 
+
+```{r echo=FALSE, warning=FALSE}
+prob1 <- predict(model_glm,type=c("response"))
+if(!require('ROCR')) install.packages('ROCR')
+library(ROCR)
+prob2 <- prediction(prob1,traindata$Class)
+#Calculation auc
+performance(prob2,'auc')@y.values 
+perf <- performance(prob2,'tpr','fpr')
+plot(perf)
+
+#test data
+pre <- predict(model_glm,testdata,type=c("response"))
+pred <- prediction(pre,testdata$Class)
+performance(pred,'auc')@y.values
+perf_test <- performance(pred,'tpr','fpr')
+plot(perf_test)
+```
+
+
