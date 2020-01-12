@@ -20,4 +20,5 @@ Report and Script
 Your report and script will be graded by your peers, based on a rubric defined by the course staff, as well as by the course staff. The staff grade will be your final grade for the project. To receive your grade, you must review and grade the reports of five of your fellow learners after submitting your own. This will give you the chance to learn from your peers.
 
 Submission
+
 The purpose of this Capstone Project is to create a credit card fraud detection system using data science and machine learning techniques to analyze transaction data of credit cards in September 2013 by European cardholders, with the dataset available at https://www.kaggle.com/mlg-ulb/creditcardfraud. The full dataset includes 284,407 transactions.
